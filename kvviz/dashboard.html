@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kvviz — Live KV Cache Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --accent: #636EFA;
+    --green: #00CC96;
+    --orange: #FFA15A;
+    --red: #EF553B;
+    --purple: #AB63FA;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    padding: 1rem;
+  }
+  h1 { font-size: 1.4rem; color: var(--accent); margin-bottom: 0.3rem; }
+  .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 1rem; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: end;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .control-group label {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .control-group input, .control-group select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.4rem 0.6rem;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    width: 120px;
+  }
+  .control-group input:focus, .control-group select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 0.5rem 1.2rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.stop { background: var(--red); }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.8rem;
+  }
+  .stat-card .label { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; }
+  .stat-card .value { font-size: 1.3rem; font-weight: 700; margin-top: 0.2rem; }
+  .stat-card .value.accent { color: var(--accent); }
+  .stat-card .value.green { color: var(--green); }
+  .stat-card .value.orange { color: var(--orange); }
+  .stat-card .value.red { color: var(--red); }
+  .stat-card .value.purple { color: var(--purple); }
+
+  .charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .chart-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem;
+    min-height: 280px;
+  }
+  .chart-box.full-width {
+    grid-column: 1 / -1;
+  }
+
+  #status {
+    color: var(--green);
+    font-size: 0.85rem;
+    min-height: 1.2em;
+    margin-bottom: 0.5rem;
+  }
+  #status.error { color: var(--red); }
+
+  @media (max-width: 900px) {
+    .charts { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>kvviz — Live KV Cache Dashboard</h1>
+<p class="subtitle">Real-time visualization of transformer KV cache memory during inference</p>
+
+<div id="status"></div>
+
+<div class="controls">
+  <div class="control-group">
+    <label>Mode</label>
+    <select id="mode">
+      <option value="synth">Synthetic</option>
+      <option value="live">Live Model</option>
+    </select>
+  </div>
+  <div class="control-group" id="model-group" style="display:none">
+    <label>Model</label>
+    <input id="model_name" value="gpt2">
+  </div>
+  <div class="control-group" id="prompt-group" style="display:none">
+    <label>Prompt</label>
+    <input id="prompt" value="The future of AI is" style="width:200px">
+  </div>
+  <div class="control-group">
+    <label>Layers</label>
+    <input id="num_layers" type="number" value="32" min="1">
+  </div>
+  <div class="control-group">
+    <label>KV Heads</label>
+    <input id="num_kv_heads" type="number" value="8" min="1">
+  </div>
+  <div class="control-group">
+    <label>Head Dim</label>
+    <input id="head_dim" type="number" value="128" min="1">
+  </div>
+  <div class="control-group">
+    <label>Prompt Tokens</label>
+    <input id="prompt_tokens" type="number" value="128" min="1">
+  </div>
+  <div class="control-group">
+    <label>Gen Tokens</label>
+    <input id="max_new_tokens" type="number" value="150" min="1">
+  </div>
+  <div class="control-group">
+    <label>Cache Window</label>
+    <input id="max_cache_tokens" type="number" placeholder="unlimited" min="1">
+  </div>
+  <div class="control-group">
+    <label>Speed (ms)</label>
+    <input id="delay_ms" type="number" value="40" min="0" max="1000">
+  </div>
+  <button id="btn-start" onclick="startRun()">Start</button>
+  <button id="btn-stop" class="stop" onclick="stopRun()" disabled>Stop</button>
+</div>
+
+<div class="stats">
+  <div class="stat-card"><div class="label">Decode Step</div><div class="value accent" id="s-step">—</div></div>
+  <div class="stat-card"><div class="label">KV Cache Size</div><div class="value green" id="s-kv">—</div></div>
+  <div class="stat-card"><div class="label">Peak KV</div><div class="value orange" id="s-peak">—</div></div>
+  <div class="stat-card"><div class="label">Cache Tokens</div><div class="value purple" id="s-tokens">—</div></div>
+  <div class="stat-card"><div class="label">Step Latency</div><div class="value" id="s-latency">—</div></div>
+  <div class="stat-card"><div class="label">Throughput</div><div class="value green" id="s-tps">—</div></div>
+</div>
+
+<div class="charts">
+  <div class="chart-box" id="chart-kv"></div>
+  <div class="chart-box" id="chart-latency"></div>
+  <div class="chart-box full-width" id="chart-heatmap"></div>
+</div>
+
+<script>
+const plotLayout = {
+  paper_bgcolor: '#1a1d27',
+  plot_bgcolor: '#1a1d27',
+  font: { color: '#e0e0e0', family: 'SF Mono, Fira Code, Consolas, monospace', size: 11 },
+  margin: { t: 36, r: 16, b: 40, l: 60 },
+  xaxis: { gridcolor: '#2a2d3a', zerolinecolor: '#2a2d3a' },
+  yaxis: { gridcolor: '#2a2d3a', zerolinecolor: '#2a2d3a' },
+  showlegend: true,
+  legend: { orientation: 'h', y: 1.12, x: 0 },
+};
+
+const plotConfig = { responsive: true, displayModeBar: false };
+
+// State
+let ws = null;
+let steps = [], kvBytes = [], peakBytes = [], latencies = [], latencySteps = [];
+let heatmapZ = []; // [layer][step]
+let numLayers = 0;
+let totalLatency = 0;
+let latencyCount = 0;
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KiB';
+  if (b < 1024*1024*1024) return (b/1024/1024).toFixed(2) + ' MiB';
+  return (b/1024/1024/1024).toFixed(2) + ' GiB';
+}
+
+function initCharts() {
+  steps = []; kvBytes = []; peakBytes = []; latencies = []; latencySteps = [];
+  heatmapZ = []; numLayers = 0; totalLatency = 0; latencyCount = 0;
+
+  Plotly.newPlot('chart-kv', [
+    { x: [], y: [], mode: 'lines', name: 'KV Current', line: { color: '#636EFA', width: 2 } },
+    { x: [], y: [], mode: 'lines', name: 'KV Peak', line: { color: '#EF553B', width: 1.5, dash: 'dash' } },
+    { x: [], y: [], mode: 'lines', name: 'Cache Window', line: { color: '#FFA15A', width: 1.5, dash: 'dot' }, visible: 'legendonly' },
+  ], { ...plotLayout, title: { text: 'KV Cache Memory', font: { size: 13 } }, yaxis: { ...plotLayout.yaxis, title: 'Bytes' }, xaxis: { ...plotLayout.xaxis, title: 'Decode Step' } }, plotConfig);
+
+  Plotly.newPlot('chart-latency', [
+    { x: [], y: [], mode: 'lines+markers', name: 'Step Latency', line: { color: '#00CC96', width: 2 }, marker: { size: 4 } },
+    { x: [], y: [], mode: 'lines', name: 'Avg', line: { color: '#AB63FA', width: 1.5, dash: 'dash' } },
+  ], { ...plotLayout, title: { text: 'Decode Latency', font: { size: 13 } }, yaxis: { ...plotLayout.yaxis, title: 'ms' }, xaxis: { ...plotLayout.xaxis, title: 'Decode Step' } }, plotConfig);
+
+  Plotly.newPlot('chart-heatmap', [
+    { z: [[]], type: 'heatmap', colorscale: 'Viridis', showscale: true,
+      colorbar: { title: { text: 'Bytes', font: { size: 10 } }, tickfont: { size: 9 } } },
+  ], { ...plotLayout, title: { text: 'Per-Layer KV Size', font: { size: 13 } },
+    xaxis: { ...plotLayout.xaxis, title: 'Decode Step' },
+    yaxis: { ...plotLayout.yaxis, title: 'Layer', autorange: true },
+    showlegend: false,
+  }, plotConfig);
+}
+
+function handleEvent(data) {
+  if (data.event_type === 'prefill_start') {
+    setStatus('Prefilling...');
+    return;
+  }
+
+  const step = data.step;
+  const kvTotal = data.kv_bytes_total;
+  const kvPeak = data.kv_bytes_peak;
+
+  steps.push(step);
+  kvBytes.push(kvTotal);
+  peakBytes.push(kvPeak);
+
+  // Latency
+  if (data.step_latency_ms != null && data.event_type === 'decode_step') {
+    latencySteps.push(step);
+    latencies.push(data.step_latency_ms);
+    totalLatency += data.step_latency_ms;
+    latencyCount++;
+  }
+
+  // Heatmap
+  if (data.layers && data.layers.length > 0) {
+    if (numLayers === 0) {
+      numLayers = data.layers.length;
+      heatmapZ = Array.from({ length: numLayers }, () => []);
+    }
+    for (const snap of data.layers) {
+      if (snap.layer_idx < numLayers) {
+        heatmapZ[snap.layer_idx].push(snap.key_bytes + snap.value_bytes);
+      }
+    }
+    // Fill missing
+    for (let i = 0; i < numLayers; i++) {
+      while (heatmapZ[i].length < steps.length) heatmapZ[i].push(0);
+    }
+  }
+
+  // Update stats
+  document.getElementById('s-step').textContent = step;
+  document.getElementById('s-kv').textContent = formatBytes(kvTotal);
+  document.getElementById('s-peak').textContent = formatBytes(kvPeak);
+  document.getElementById('s-tokens').textContent = data.total_tokens;
+  if (data.step_latency_ms != null) {
+    document.getElementById('s-latency').textContent = data.step_latency_ms.toFixed(1) + ' ms';
+  }
+  if (latencyCount > 0) {
+    const avg = totalLatency / latencyCount;
+    const tps = 1000 / avg;
+    document.getElementById('s-tps').textContent = tps.toFixed(1) + ' tok/s';
+  }
+
+  // Batch chart updates — every 3 steps or on specific events
+  if (step % 3 === 0 || data.event_type === 'prefill_end' || data.event_type === 'generation_end') {
+    updateCharts();
+  }
+}
+
+function updateCharts() {
+  // KV memory chart
+  const kvUpdate = { x: [steps, steps], y: [kvBytes, peakBytes] };
+  Plotly.update('chart-kv', kvUpdate, {}, [0, 1]);
+
+  // Latency chart
+  if (latencies.length > 0) {
+    const avg = totalLatency / latencyCount;
+    const avgLine = latencySteps.map(() => avg);
+    Plotly.update('chart-latency', { x: [latencySteps, latencySteps], y: [latencies, avgLine] }, {}, [0, 1]);
+  }
+
+  // Heatmap
+  if (numLayers > 0 && heatmapZ[0].length > 0) {
+    const yLabels = Array.from({ length: numLayers }, (_, i) => `L${i}`);
+    Plotly.update('chart-heatmap', {
+      z: [heatmapZ],
+      y: [yLabels],
+    }, {}, [0]);
+  }
+}
+
+function setStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isError ? 'error' : '';
+}
+
+function startRun() {
+  const mode = document.getElementById('mode').value;
+
+  initCharts();
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    setStatus('Connected, starting...');
+    const config = { mode };
+
+    if (mode === 'synth') {
+      config.num_layers = parseInt(document.getElementById('num_layers').value);
+      config.num_kv_heads = parseInt(document.getElementById('num_kv_heads').value);
+      config.head_dim = parseInt(document.getElementById('head_dim').value);
+      config.prompt_tokens = parseInt(document.getElementById('prompt_tokens').value);
+      config.max_new_tokens = parseInt(document.getElementById('max_new_tokens').value);
+      config.delay_ms = parseInt(document.getElementById('delay_ms').value);
+      const cacheWin = document.getElementById('max_cache_tokens').value;
+      if (cacheWin) config.max_cache_tokens = parseInt(cacheWin);
+    } else {
+      config.model_name = document.getElementById('model_name').value;
+      config.prompt = document.getElementById('prompt').value;
+      config.max_new_tokens = parseInt(document.getElementById('max_new_tokens').value);
+      const cacheWin = document.getElementById('max_cache_tokens').value;
+      if (cacheWin) config.max_cache_tokens = parseInt(cacheWin);
+    }
+
+    ws.send(JSON.stringify(config));
+  };
+
+  ws.onmessage = (evt) => {
+    const data = JSON.parse(evt.data);
+
+    if (data.type === 'config') {
+      setStatus(`Model: ${data.model_name} | ${data.num_layers}L / ${data.num_kv_heads}KV / d${data.head_dim} / ${data.dtype}` +
+        (data.max_cache_tokens ? ` | window=${data.max_cache_tokens}` : ' | no eviction'));
+      return;
+    }
+    if (data.type === 'status') {
+      setStatus(data.message);
+      return;
+    }
+    if (data.type === 'error') {
+      setStatus(data.error, true);
+      onDone();
+      return;
+    }
+    if (data.type === 'done') {
+      setStatus('Generation complete (' + steps.length + ' events)');
+      updateCharts();
+      onDone();
+      return;
+    }
+    if (data.type === 'event') {
+      handleEvent(data);
+    }
+  };
+
+  ws.onerror = () => {
+    setStatus('WebSocket error', true);
+    onDone();
+  };
+
+  ws.onclose = () => {
+    onDone();
+  };
+}
+
+function stopRun() {
+  if (ws) { ws.close(); ws = null; }
+  onDone();
+  setStatus('Stopped');
+}
+
+function onDone() {
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+  updateCharts();
+}
+
+// Toggle live-mode fields
+document.getElementById('mode').addEventListener('change', (e) => {
+  const isLive = e.target.value === 'live';
+  document.getElementById('model-group').style.display = isLive ? '' : 'none';
+  document.getElementById('prompt-group').style.display = isLive ? '' : 'none';
+  // Hide synth-only fields in live mode
+  document.getElementById('num_layers').closest('.control-group').style.display = isLive ? 'none' : '';
+  document.getElementById('num_kv_heads').closest('.control-group').style.display = isLive ? 'none' : '';
+  document.getElementById('head_dim').closest('.control-group').style.display = isLive ? 'none' : '';
+  document.getElementById('prompt_tokens').closest('.control-group').style.display = isLive ? 'none' : '';
+  document.getElementById('delay_ms').closest('.control-group').style.display = isLive ? 'none' : '';
+});
+
+// Init charts on load
+initCharts();
+</script>
+</body>
+</html>
