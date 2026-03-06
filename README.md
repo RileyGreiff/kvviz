@@ -24,6 +24,12 @@ The KV cache is often the memory bottleneck during LLM inference. It grows linea
 ### Install
 
 ```bash
+# Install from GitHub
+pip install git+https://github.com/RileyGreiff/kvviz.git
+pip install "kvviz[dashboard] @ git+https://github.com/RileyGreiff/kvviz.git"
+pip install "kvviz[hf] @ git+https://github.com/RileyGreiff/kvviz.git"
+
+# Or clone and install locally
 pip install -e .                # core (estimate + synth + report)
 pip install -e ".[dashboard]"   # + live dashboard (FastAPI + WebSocket)
 pip install -e ".[hf]"          # + torch + transformers for live model monitoring
