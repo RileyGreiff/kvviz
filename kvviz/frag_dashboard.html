@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kvviz — Live Fragmentation Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --accent: #636EFA;
+    --green: #00CC96;
+    --orange: #FFA15A;
+    --red: #EF553B;
+    --purple: #AB63FA;
+    --cyan: #19D3F3;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    padding: 1rem;
+  }
+  h1 { font-size: 1.4rem; color: var(--accent); margin-bottom: 0.3rem; }
+  .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 1rem; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: end;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .control-group label {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .control-group input, .control-group select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.4rem 0.6rem;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    width: 120px;
+  }
+  .control-group input:focus, .control-group select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 0.5rem 1.2rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.stop { background: var(--red); }
+
+  /* Info button tooltip */
+  .info-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--border);
+    color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 700;
+    font-style: normal;
+    cursor: help;
+    position: relative;
+    flex-shrink: 0;
+    line-height: 1;
+    user-select: none;
+  }
+  .info-btn:hover { background: var(--accent); color: #fff; }
+  .info-btn .tooltip {
+    display: none;
+    position: fixed;
+    background: #252836;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text);
+    width: 280px;
+    max-width: 90vw;
+    text-transform: none;
+    letter-spacing: normal;
+    line-height: 1.45;
+    z-index: 1000;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    pointer-events: none;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.8rem;
+  }
+  .stat-card .label {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .stat-card .value { font-size: 1.3rem; font-weight: 700; margin-top: 0.2rem; }
+  .stat-card .value.accent { color: var(--accent); }
+  .stat-card .value.green { color: var(--green); }
+  .stat-card .value.orange { color: var(--orange); }
+  .stat-card .value.red { color: var(--red); }
+  .stat-card .value.purple { color: var(--purple); }
+  .stat-card .value.cyan { color: var(--cyan); }
+
+  .charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .chart-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem;
+    min-height: 280px;
+    position: relative;
+  }
+  .chart-box.full-width {
+    grid-column: 1 / -1;
+  }
+  .chart-info {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    z-index: 10;
+  }
+
+  #status {
+    color: var(--green);
+    font-size: 0.85rem;
+    min-height: 1.2em;
+    margin-bottom: 0.5rem;
+  }
+  #status.error { color: var(--red); }
+
+  /* Block grid */
+  #block-grid-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+    position: relative;
+  }
+  #block-grid-container .grid-title {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  #block-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  .block-cell {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    background: #23263a;
+  }
+  .block-cell.free { background: #23263a; }
+
+  @media (max-width: 900px) {
+    .charts { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>kvviz — Live Fragmentation Dashboard</h1>
+<p class="subtitle">Real-time block-level KV cache fragmentation visualization</p>
+
+<div id="status"></div>
+
+<div class="controls">
+  <div class="control-group">
+    <label>Mode
+      <span class="info-btn">i<span class="tooltip">Synthetic: simulates requests without a GPU. Replay: replays a saved trace file. vLLM Live: connects to a running vLLM inference engine to observe real KV cache block allocation.</span></span>
+    </label>
+    <select id="mode">
+      <option value="synth">Synthetic</option>
+      <option value="replay">Replay</option>
+      <option value="vllm">vLLM Live</option>
+    </select>
+  </div>
+  <div class="control-group synth-field">
+    <label>Preset
+      <span class="info-btn">i<span class="tooltip">Pre-configured scenarios. "High Fragmentation" shows heavy churn with a constrained memory pool — the most visually interesting. "Steady Load" shows moderate usage. "Custom" lets you set everything manually.</span></span>
+    </label>
+    <select id="preset" onchange="applyPreset()">
+      <option value="high-frag" selected>High Fragmentation</option>
+      <option value="memory-pressure">Memory Pressure</option>
+      <option value="steady">Steady Load</option>
+      <option value="burst">Burst Traffic</option>
+      <option value="custom">Custom</option>
+    </select>
+  </div>
+  <div class="control-group synth-field">
+    <label>Requests
+      <span class="info-btn">i<span class="tooltip">Number of independent LLM requests to simulate. Like 25 users sending prompts to a chatbot at the same time. Each request arrives, allocates KV cache blocks, grows during generation, then finishes and frees its blocks.</span></span>
+    </label>
+    <input id="num_requests" type="number" value="50" min="1">
+  </div>
+  <div class="control-group synth-field">
+    <label>Arrival Rate
+      <span class="info-btn">i<span class="tooltip">Average number of new requests arriving per time step. At 1.5, roughly 1-2 new users start a request each step. Higher values mean more overlapping requests, more contention for blocks, and more fragmentation.</span></span>
+    </label>
+    <input id="arrival_rate" type="number" value="0.6" min="0.1" step="0.1">
+  </div>
+  <div class="control-group synth-field">
+    <label>Block Size
+      <span class="info-btn">i<span class="tooltip">How many tokens fit in one block (e.g. 16). vLLM allocates memory in fixed-size blocks, not per-token. A request needing 50 tokens uses 4 blocks (64 capacity, 14 wasted). Smaller blocks reduce waste but increase management overhead.</span></span>
+    </label>
+    <input id="block_size_tokens" type="number" value="16" min="1">
+  </div>
+  <div class="control-group synth-field">
+    <label>Allocator
+      <span class="info-btn">i<span class="tooltip">Paged: grab any free block anywhere in memory (like virtual memory pages). This is what vLLM uses. Fast allocation but scatters blocks. Contiguous: try to find adjacent free blocks in a row. Less fragmentation but harder to fit when memory is choppy.</span></span>
+    </label>
+    <select id="allocator">
+      <option value="paged">Paged</option>
+      <option value="contiguous">Contiguous</option>
+    </select>
+  </div>
+  <div class="control-group synth-field">
+    <label>Max Blocks
+      <span class="info-btn">i<span class="tooltip">Upper limit on the total block pool size. Leave empty for unlimited growth. Setting a limit simulates a fixed GPU memory budget — fragmentation is most visible when the pool is 40-70% full with churn.</span></span>
+    </label>
+    <input id="max_blocks" type="number" value="500" min="1">
+  </div>
+  <div class="control-group synth-field">
+    <label>Prompt Tokens
+      <span class="info-btn">i<span class="tooltip">Range of prompt token lengths (min-max). Each request gets a random prompt length in this range. Smaller prompts = fewer blocks per request = more requests fit in the pool = more churn.</span></span>
+    </label>
+    <div style="display:flex;gap:4px">
+      <input id="min_prompt_tokens" type="number" value="16" min="1" style="width:55px">
+      <input id="max_prompt_tokens" type="number" value="64" min="1" style="width:55px">
+    </div>
+  </div>
+  <div class="control-group synth-field">
+    <label>Gen Tokens
+      <span class="info-btn">i<span class="tooltip">Range of generation token lengths (min-max). Longer generation = request holds blocks longer = more overlap with other requests. Short generation = fast turnover.</span></span>
+    </label>
+    <div style="display:flex;gap:4px">
+      <input id="min_gen_tokens" type="number" value="8" min="1" style="width:55px">
+      <input id="max_gen_tokens" type="number" value="48" min="1" style="width:55px">
+    </div>
+  </div>
+  <div class="control-group">
+    <label>Speed (ms)
+      <span class="info-btn">i<span class="tooltip">Delay in milliseconds between streaming each snapshot to the browser. Lower = faster animation. Set to 0 for maximum speed.</span></span>
+    </label>
+    <input id="delay_ms" type="number" value="80" min="0" max="2000">
+  </div>
+  <div class="control-group">
+    <label>Playback Speed
+      <span class="info-btn">i<span class="tooltip">Multiplier applied to the delay. 2x plays twice as fast, 10x plays ten times faster. Useful for quickly scanning through long simulations.</span></span>
+    </label>
+    <select id="speed">
+      <option value="0.5">0.5x</option>
+      <option value="1" selected>1x</option>
+      <option value="2">2x</option>
+      <option value="5">5x</option>
+      <option value="10">10x</option>
+    </select>
+  </div>
+  <div class="control-group replay-field" style="display:none">
+    <label>Trace Path
+      <span class="info-btn">i<span class="tooltip">Path to a previously saved fragmentation trace JSON file (from kvviz frag-sim). The trace will be replayed as a live animation.</span></span>
+    </label>
+    <input id="trace_path" value="frag_trace.json" style="width:200px">
+  </div>
+  <button id="btn-start" onclick="startRun()">Start</button>
+  <button id="btn-stop" class="stop" onclick="stopRun()" disabled>Stop</button>
+</div>
+
+<div class="stats">
+  <div class="stat-card">
+    <div class="label">Total Blocks
+      <span class="info-btn">i<span class="tooltip">Total size of the block pool. Grows dynamically as requests need more memory (unless Max Blocks is set).</span></span>
+    </div>
+    <div class="value accent" id="s-total">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Free Blocks
+      <span class="info-btn">i<span class="tooltip">Blocks not currently owned by any request. Available for new allocations.</span></span>
+    </div>
+    <div class="value green" id="s-free">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Used Blocks
+      <span class="info-btn">i<span class="tooltip">Blocks currently allocated to active requests holding KV cache data.</span></span>
+    </div>
+    <div class="value orange" id="s-used">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Active Requests
+      <span class="info-btn">i<span class="tooltip">Number of requests currently generating tokens. Each request holds blocks until it finishes.</span></span>
+    </div>
+    <div class="value purple" id="s-reqs">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Fragmentation
+      <span class="info-btn">i<span class="tooltip">1 - (largest contiguous free run / total free blocks). 0% = all free blocks are together (perfect). 90% = free blocks are scattered into tiny gaps. High fragmentation means new large allocations can fail even when total free space is sufficient.</span></span>
+    </div>
+    <div class="value red" id="s-frag">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">CUDA Frag
+      <span class="info-btn">i<span class="tooltip">GPU-level memory fragmentation from PyTorch's CUDA allocator: (reserved - active) / reserved. Only populated when connected to a real GPU workload (vLLM mode). Empty in synthetic mode.</span></span>
+    </div>
+    <div class="value cyan" id="s-cuda-frag">—</div>
+  </div>
+</div>
+
+<div id="block-grid-container">
+  <div class="grid-title">Block Occupancy Grid
+    <span class="info-btn">i<span class="tooltip">Each square is one memory block. Colored = owned by a request (color = request identity). Dark = free. Watch fragmentation happen as colored blocks scatter and gaps appear between them. Hover a cell to see its block index and owner.</span></span>
+  </div>
+  <div id="block-grid"></div>
+</div>
+
+<div class="charts">
+  <div class="chart-box" id="chart-frag">
+    <div class="chart-info">
+      <span class="info-btn">i<span class="tooltip">Fragmentation ratio over time (0 to 1). Measures how scattered the free blocks are. Computed as 1 - (largest contiguous free run / total free blocks). Spikes when requests free non-adjacent blocks, drops when large contiguous regions open up.</span></span>
+    </div>
+  </div>
+  <div class="chart-box" id="chart-blocks">
+    <div class="chart-info">
+      <span class="info-btn">i<span class="tooltip">Stacked area showing used blocks (orange) vs free blocks (green) over time. The total height is the pool size. Watch it ramp up as requests arrive, dip when requests finish and free blocks, then ramp again.</span></span>
+    </div>
+  </div>
+  <div class="chart-box" id="chart-packing">
+    <div class="chart-info">
+      <span class="info-btn">i<span class="tooltip">How efficiently tokens fill their allocated blocks (0 to 1). A request using 50 tokens in 4 blocks of 16 = 50/64 = 0.78. The remaining 14 tokens of capacity are "tail waste". Smaller block sizes improve packing but increase overhead.</span></span>
+    </div>
+  </div>
+  <div class="chart-box" id="chart-cuda">
+    <div class="chart-info">
+      <span class="info-btn">i<span class="tooltip">Real GPU memory from PyTorch's CUDA allocator. Active (blue) = memory in use. Inactive split (red) = fragmented blocks the allocator reserved but can't use. Reserved (dashed) = total GPU memory claimed. Only populated in vLLM live mode.</span></span>
+    </div>
+  </div>
+</div>
+
+<script>
+const COLORS = [
+  '#636EFA','#EF553B','#00CC96','#AB63FA','#FFA15A','#19D3F3','#FF6692','#B6E880',
+  '#FF97FF','#FECB52','#E45756','#72B7B2','#54A24B','#EECA3B','#B279A2','#FF9DA6',
+  '#9D755D','#BAB0AC','#D4A6C8','#9ECAE9','#66C5CC','#F6CF71','#F89C74','#DCB0F2',
+];
+function reqColor(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
+  return COLORS[Math.abs(h) % COLORS.length];
+}
+
+const plotLayout = {
+  paper_bgcolor: '#1a1d27',
+  plot_bgcolor: '#1a1d27',
+  font: { color: '#e0e0e0', family: 'SF Mono, Fira Code, Consolas, monospace', size: 11 },
+  margin: { t: 36, r: 16, b: 40, l: 60 },
+  xaxis: { gridcolor: '#2a2d3a', zerolinecolor: '#2a2d3a' },
+  yaxis: { gridcolor: '#2a2d3a', zerolinecolor: '#2a2d3a' },
+  showlegend: true,
+  legend: { orientation: 'h', y: 1.12, x: 0 },
+};
+const plotConfig = { responsive: true, displayModeBar: false };
+
+let ws = null;
+let snapIdx = 0;
+let fragSteps = [], fragValues = [];
+let blockSteps = [], usedValues = [], freeValues = [];
+let packSteps = [], packValues = [];
+let cudaSteps = [], cudaActive = [], cudaInactive = [], cudaReserved = [];
+
+function initCharts() {
+  snapIdx = 0;
+  fragSteps = []; fragValues = [];
+  blockSteps = []; usedValues = []; freeValues = [];
+  packSteps = []; packValues = [];
+  cudaSteps = []; cudaActive = []; cudaInactive = []; cudaReserved = [];
+  document.getElementById('block-grid').innerHTML = '';
+
+  Plotly.newPlot('chart-frag', [
+    { x: [], y: [], mode: 'lines', name: 'Fragmentation', line: { color: '#EF553B', width: 2 } },
+  ], { ...plotLayout, title: { text: 'Fragmentation Ratio', font: { size: 13 } },
+    yaxis: { ...plotLayout.yaxis, title: 'Ratio', range: [0, 1.05] },
+    xaxis: { ...plotLayout.xaxis, title: 'Snapshot' },
+    showlegend: false,
+  }, plotConfig);
+
+  Plotly.newPlot('chart-blocks', [
+    { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Used', stackgroup: 'one', line: { color: '#FFA15A', width: 0 }, fillcolor: 'rgba(255,161,90,0.6)' },
+    { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Free', stackgroup: 'one', line: { color: '#00CC96', width: 0 }, fillcolor: 'rgba(0,204,150,0.3)' },
+  ], { ...plotLayout, title: { text: 'Block Utilization', font: { size: 13 } },
+    yaxis: { ...plotLayout.yaxis, title: 'Blocks' },
+    xaxis: { ...plotLayout.xaxis, title: 'Snapshot' },
+  }, plotConfig);
+
+  Plotly.newPlot('chart-packing', [
+    { x: [], y: [], mode: 'lines', name: 'Packing Eff.', line: { color: '#AB63FA', width: 2 } },
+  ], { ...plotLayout, title: { text: 'Packing Efficiency', font: { size: 13 } },
+    yaxis: { ...plotLayout.yaxis, title: 'Ratio', range: [0, 1.05] },
+    xaxis: { ...plotLayout.xaxis, title: 'Snapshot' },
+    showlegend: false,
+  }, plotConfig);
+
+  Plotly.newPlot('chart-cuda', [
+    { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Active', stackgroup: 'one', line: { color: '#636EFA', width: 0 }, fillcolor: 'rgba(99,110,250,0.6)' },
+    { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Inactive Split', stackgroup: 'one', line: { color: '#EF553B', width: 0 }, fillcolor: 'rgba(239,85,59,0.5)' },
+    { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Reserved', line: { color: '#19D3F3', width: 1.5, dash: 'dash' } },
+  ], { ...plotLayout, title: { text: 'CUDA Memory', font: { size: 13 } },
+    yaxis: { ...plotLayout.yaxis, title: 'Bytes' },
+    xaxis: { ...plotLayout.xaxis, title: 'Snapshot' },
+  }, plotConfig);
+}
+
+function renderBlockGrid(blockMap) {
+  const grid = document.getElementById('block-grid');
+  if (!blockMap || blockMap.length === 0) {
+    grid.innerHTML = '<span style="color:var(--text-dim);font-size:0.8rem">No block map available</span>';
+    return;
+  }
+
+  // Reuse or create cells
+  while (grid.children.length > blockMap.length) grid.removeChild(grid.lastChild);
+  while (grid.children.length < blockMap.length) {
+    const cell = document.createElement('div');
+    cell.className = 'block-cell';
+    grid.appendChild(cell);
+  }
+
+  for (let i = 0; i < blockMap.length; i++) {
+    const cell = grid.children[i];
+    const owner = blockMap[i];
+    if (owner == null) {
+      cell.style.background = '#23263a';
+      cell.title = `Block ${i}: free`;
+    } else {
+      cell.style.background = reqColor(owner);
+      cell.title = `Block ${i}: ${owner}`;
+    }
+  }
+}
+
+function handleSnapshot(data) {
+  snapIdx++;
+  const idx = snapIdx;
+
+  // Stats
+  document.getElementById('s-total').textContent = data.total_blocks;
+  document.getElementById('s-free').textContent = data.free_blocks;
+  document.getElementById('s-used').textContent = data.used_blocks;
+  document.getElementById('s-reqs').textContent = data.requests ? data.requests.length : 0;
+  document.getElementById('s-frag').textContent = (data.fragmentation_ratio * 100).toFixed(1) + '%';
+
+  if (data.cuda_stats) {
+    document.getElementById('s-cuda-frag').textContent =
+      (data.cuda_stats.fragmentation_ratio * 100).toFixed(1) + '%';
+  }
+
+  // Block grid
+  renderBlockGrid(data.block_map);
+
+  // Series data
+  fragSteps.push(idx);
+  fragValues.push(data.fragmentation_ratio);
+
+  blockSteps.push(idx);
+  usedValues.push(data.used_blocks);
+  freeValues.push(data.free_blocks);
+
+  packSteps.push(idx);
+  packValues.push(data.packing_efficiency);
+
+  if (data.cuda_stats) {
+    cudaSteps.push(idx);
+    cudaActive.push(data.cuda_stats.active_bytes);
+    cudaInactive.push(data.cuda_stats.inactive_split_bytes);
+    cudaReserved.push(data.cuda_stats.reserved_bytes);
+  }
+
+  // Batch chart updates
+  if (idx % 3 === 0) updateCharts();
+}
+
+function updateCharts() {
+  Plotly.update('chart-frag', { x: [fragSteps], y: [fragValues] }, {}, [0]);
+  Plotly.update('chart-blocks', { x: [blockSteps, blockSteps], y: [usedValues, freeValues] }, {}, [0, 1]);
+  Plotly.update('chart-packing', { x: [packSteps], y: [packValues] }, {}, [0]);
+  if (cudaSteps.length > 0) {
+    Plotly.update('chart-cuda', {
+      x: [cudaSteps, cudaSteps, cudaSteps],
+      y: [cudaActive, cudaInactive, cudaReserved],
+    }, {}, [0, 1, 2]);
+  }
+}
+
+function setStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isError ? 'error' : '';
+}
+
+function startRun() {
+  const mode = document.getElementById('mode').value;
+  initCharts();
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    setStatus('Connected, starting...');
+    const config = { mode };
+
+    if (mode === 'synth') {
+      config.num_requests = parseInt(document.getElementById('num_requests').value);
+      config.arrival_rate = parseFloat(document.getElementById('arrival_rate').value);
+      config.block_size_tokens = parseInt(document.getElementById('block_size_tokens').value);
+      config.allocator = document.getElementById('allocator').value;
+      config.delay_ms = parseInt(document.getElementById('delay_ms').value);
+      config.speed = parseFloat(document.getElementById('speed').value);
+      const mb = document.getElementById('max_blocks').value;
+      if (mb) config.max_blocks = parseInt(mb);
+      config.min_prompt_tokens = parseInt(document.getElementById('min_prompt_tokens').value);
+      config.max_prompt_tokens = parseInt(document.getElementById('max_prompt_tokens').value);
+      config.min_gen_tokens = parseInt(document.getElementById('min_gen_tokens').value);
+      config.max_gen_tokens = parseInt(document.getElementById('max_gen_tokens').value);
+    } else if (mode === 'replay') {
+      config.trace_path = document.getElementById('trace_path').value;
+      config.delay_ms = parseInt(document.getElementById('delay_ms').value);
+      config.speed = parseFloat(document.getElementById('speed').value);
+    }
+
+    ws.send(JSON.stringify(config));
+  };
+
+  ws.onmessage = (evt) => {
+    const data = JSON.parse(evt.data);
+    if (data.type === 'config') {
+      const parts = [];
+      if (data.allocator) parts.push(`Allocator: ${data.allocator}`);
+      if (data.block_size_tokens) parts.push(`Block: ${data.block_size_tokens} tok`);
+      if (data.total_requests) parts.push(`${data.total_requests} requests`);
+      if (data.total_steps) parts.push(`${data.total_steps} steps`);
+      if (data.total_events) parts.push(`${data.total_events} events`);
+      setStatus(parts.join(' | '));
+      return;
+    }
+    if (data.type === 'status') { setStatus(data.message); return; }
+    if (data.type === 'error') { setStatus(data.error, true); onDone(); return; }
+    if (data.type === 'done') {
+      setStatus('Complete (' + snapIdx + ' snapshots)');
+      updateCharts();
+      onDone();
+      return;
+    }
+    if (data.type === 'snapshot') { handleSnapshot(data); }
+  };
+
+  ws.onerror = () => { setStatus('WebSocket error', true); onDone(); };
+  ws.onclose = () => { onDone(); };
+}
+
+function stopRun() {
+  if (ws) { ws.close(); ws = null; }
+  onDone();
+  setStatus('Stopped');
+}
+
+function onDone() {
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+  updateCharts();
+}
+
+// Toggle mode fields
+document.getElementById('mode').addEventListener('change', (e) => {
+  const v = e.target.value;
+  document.querySelectorAll('.synth-field').forEach(el => el.style.display = v === 'synth' ? '' : 'none');
+  document.querySelectorAll('.replay-field').forEach(el => el.style.display = v === 'replay' ? '' : 'none');
+});
+
+// Presets — tuned so pool is 40-70% utilized with churn for visible fragmentation
+// Key: requests * avg_blocks_per_req should be ~50-70% of max_blocks at peak concurrency
+const PRESETS = {
+  'high-frag': {
+    num_requests: 50, arrival_rate: 0.6, block_size_tokens: 16, allocator: 'paged', max_blocks: 500,
+    min_prompt: 16, max_prompt: 64, min_gen: 8, max_gen: 48,
+    // avg ~50 tok/req = ~3-4 blocks, ~8-12 concurrent = 30-50 blocks used of 500 → lots of churn & scatter
+  },
+  'steady': {
+    num_requests: 30, arrival_rate: 0.4, block_size_tokens: 16, allocator: 'paged', max_blocks: 400,
+    min_prompt: 16, max_prompt: 80, min_gen: 8, max_gen: 40,
+  },
+  'burst': {
+    num_requests: 80, arrival_rate: 4.0, block_size_tokens: 16, allocator: 'paged', max_blocks: 300,
+    min_prompt: 8, max_prompt: 48, min_gen: 4, max_gen: 24,
+    // many small requests arriving fast, quick turnover
+  },
+  'memory-pressure': {
+    num_requests: 40, arrival_rate: 0.8, block_size_tokens: 16, allocator: 'paged', max_blocks: 120,
+    min_prompt: 16, max_prompt: 48, min_gen: 8, max_gen: 32,
+    // tight pool — forces heavy reuse and visible fragmentation
+  },
+};
+
+function applyPreset() {
+  const key = document.getElementById('preset').value;
+  const p = PRESETS[key];
+  if (!p) return; // custom — leave fields as-is
+  document.getElementById('num_requests').value = p.num_requests;
+  document.getElementById('arrival_rate').value = p.arrival_rate;
+  document.getElementById('block_size_tokens').value = p.block_size_tokens;
+  document.getElementById('allocator').value = p.allocator;
+  document.getElementById('max_blocks').value = p.max_blocks;
+  document.getElementById('min_prompt_tokens').value = p.min_prompt;
+  document.getElementById('max_prompt_tokens').value = p.max_prompt;
+  document.getElementById('min_gen_tokens').value = p.min_gen;
+  document.getElementById('max_gen_tokens').value = p.max_gen;
+}
+
+// Tooltip positioning — show below if not enough room above
+document.querySelectorAll('.info-btn').forEach(btn => {
+  const tip = btn.querySelector('.tooltip');
+  if (!tip) return;
+
+  btn.addEventListener('mouseenter', () => {
+    tip.style.display = 'block';
+    const btnRect = btn.getBoundingClientRect();
+    const tipRect = tip.getBoundingClientRect();
+
+    // Try above first
+    let top = btnRect.top - tipRect.height - 8;
+    if (top < 4) {
+      // Not enough room above, show below
+      top = btnRect.bottom + 8;
+    }
+
+    let left = btnRect.left + btnRect.width / 2 - tipRect.width / 2;
+    // Keep within viewport horizontally
+    if (left < 4) left = 4;
+    if (left + tipRect.width > window.innerWidth - 4) left = window.innerWidth - tipRect.width - 4;
+
+    tip.style.top = top + 'px';
+    tip.style.left = left + 'px';
+  });
+
+  btn.addEventListener('mouseleave', () => {
+    tip.style.display = 'none';
+  });
+});
+
+initCharts();
+</script>
+</body>
+</html>

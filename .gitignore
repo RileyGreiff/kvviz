@@ -13,4 +13,5 @@ venv/
 !pyproject.toml
 *.html
 !kvviz/dashboard.html
+!kvviz/frag_dashboard.html
 .claude/

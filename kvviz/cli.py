@@ -258,5 +258,203 @@ def dashboard(
     run_server(host=host, port=port)
 
 
+# ---------- synth-traffic ----------
+
+@app.command(name="synth-traffic")
+def synth_traffic(
+    requests: int = typer.Option(25, help="Number of requests to generate"),
+    arrival_rate: float = typer.Option(1.5, help="Average arrivals per time step"),
+    min_prompt_tokens: int = typer.Option(16, help="Minimum prompt length"),
+    max_prompt_tokens: int = typer.Option(512, help="Maximum prompt length"),
+    min_gen_tokens: int = typer.Option(8, help="Minimum generation length"),
+    max_gen_tokens: int = typer.Option(128, help="Maximum generation length"),
+    seed: Optional[int] = typer.Option(None, help="Random seed for reproducibility"),
+    out: Path = typer.Option("traffic.json", help="Output traffic JSON path"),
+):
+    """Generate a synthetic multi-request traffic trace with overlapping requests."""
+    from kvviz.fragmentation.traffic import generate_traffic
+
+    traffic = generate_traffic(
+        requests=requests,
+        arrival_rate=arrival_rate,
+        min_prompt_tokens=min_prompt_tokens,
+        max_prompt_tokens=max_prompt_tokens,
+        min_gen_tokens=min_gen_tokens,
+        max_gen_tokens=max_gen_tokens,
+        seed=seed,
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(traffic.model_dump_json(indent=2), encoding="utf-8")
+    console.print(f"Traffic trace written to [green]{out}[/green] ({len(traffic.requests)} requests, {traffic.total_steps} steps)")
+
+
+# ---------- frag-sim ----------
+
+@app.command(name="frag-sim")
+def frag_sim(
+    trace_path: Path = typer.Argument(..., help="Path to traffic or kvviz trace JSON"),
+    block_size_tokens: int = typer.Option(16, help="Tokens per block"),
+    allocator: str = typer.Option("paged", help="Allocator mode: paged or contiguous"),
+    max_blocks: Optional[int] = typer.Option(None, help="Maximum number of blocks"),
+    cache_window_tokens: Optional[int] = typer.Option(None, help="Sliding window size in tokens"),
+    free_policy: str = typer.Option("immediate", help="Free policy: immediate or end_of_request"),
+    out: Path = typer.Option("frag_trace.json", help="Output fragmentation trace path"),
+):
+    """Simulate KV cache block allocation and fragmentation."""
+    from kvviz.fragmentation.schema import AllocatorMode, FragSimConfig, FreePolicy
+    from kvviz.fragmentation.simulation import load_traffic, simulate
+
+    if not trace_path.exists():
+        console.print(f"[red]Trace file not found: {trace_path}[/red]")
+        raise typer.Exit(1)
+
+    traffic, source = load_traffic(trace_path)
+    console.print(f"Loaded {source} with {len(traffic.requests)} requests")
+
+    config = FragSimConfig(
+        block_size_tokens=block_size_tokens,
+        allocator=AllocatorMode(allocator),
+        max_blocks=max_blocks,
+        cache_window_tokens=cache_window_tokens,
+        free_policy=FreePolicy(free_policy),
+    )
+
+    frag_trace = simulate(traffic, config)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(frag_trace.model_dump_json(indent=2), encoding="utf-8")
+
+    peak_used = max((e.global_metrics.used_blocks for e in frag_trace.events), default=0)
+    console.print(f"Simulation complete: {len(frag_trace.events)} events, peak {peak_used} blocks used")
+    console.print(f"Fragmentation trace written to [green]{out}[/green]")
+    console.print(f"\nGenerate report with: [bold]kvviz frag-report {out}[/bold]")
+
+
+# ---------- frag-report ----------
+
+@app.command(name="frag-report")
+def frag_report(
+    trace_path: Path = typer.Argument(..., help="Path to fragmentation trace JSON"),
+    out: Path = typer.Option("frag_report.html", help="Output HTML report path"),
+):
+    """Generate a standalone HTML fragmentation report."""
+    from kvviz.fragmentation.schema import FragTrace
+    from kvviz.fragmentation.report import generate_frag_report
+
+    if not trace_path.exists():
+        console.print(f"[red]Trace file not found: {trace_path}[/red]")
+        raise typer.Exit(1)
+
+    data = json.loads(trace_path.read_text(encoding="utf-8"))
+    frag_trace = FragTrace.model_validate(data)
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    result_path = generate_frag_report(frag_trace, out)
+    console.print(f"Fragmentation report written to [green]{result_path.resolve()}[/green]")
+
+
+# ---------- frag-compare ----------
+
+@app.command(name="frag-compare")
+def frag_compare(
+    trace_a: Path = typer.Argument(..., help="First fragmentation trace JSON"),
+    trace_b: Path = typer.Argument(..., help="Second fragmentation trace JSON"),
+    out: Path = typer.Option("frag_compare.html", help="Output HTML comparison report path"),
+):
+    """Compare two fragmentation traces side-by-side."""
+    from kvviz.fragmentation.schema import FragTrace
+    from kvviz.fragmentation.report import generate_frag_report
+
+    for p in (trace_a, trace_b):
+        if not p.exists():
+            console.print(f"[red]Trace file not found: {p}[/red]")
+            raise typer.Exit(1)
+
+    ft_a = FragTrace.model_validate_json(trace_a.read_text(encoding="utf-8"))
+    ft_b = FragTrace.model_validate_json(trace_b.read_text(encoding="utf-8"))
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    result_path = generate_frag_report(ft_a, out, compare_trace=ft_b)
+    console.print(f"Comparison report written to [green]{result_path.resolve()}[/green]")
+
+
+# ---------- frag-dashboard ----------
+
+@app.command(name="frag-dashboard")
+def frag_dashboard(
+    host: str = typer.Option("127.0.0.1", help="Bind address"),
+    port: int = typer.Option(8766, help="Port"),
+):
+    """Launch the live fragmentation dashboard (WebSocket + browser UI)."""
+    try:
+        from kvviz.frag_dashboard import run_server
+    except ImportError as e:
+        console.print(f"[red]Missing dependency: {e}[/red]")
+        console.print("Install with: pip install kvviz[dashboard]")
+        raise typer.Exit(1)
+    run_server(host=host, port=port)
+
+
+# ---------- frag-live ----------
+
+@app.command(name="frag-live")
+def frag_live(
+    poll_hz: float = typer.Option(5.0, help="Polling frequency in Hz"),
+    block_size_tokens: int = typer.Option(16, help="Tokens per block (must match engine config)"),
+    out: Path = typer.Option("frag_trace.json", help="Output fragmentation trace path"),
+    duration: float = typer.Option(60.0, help="Collection duration in seconds"),
+    cuda_device: int = typer.Option(0, help="CUDA device index for memory stats"),
+):
+    """Collect live KV cache fragmentation from a running vLLM engine.
+
+    NOTE: The engine must be importable in the same process. This command
+    is primarily for scripting — see the Python API for programmatic use.
+
+    Requires: pip install kvviz[vllm]
+    """
+    import time as _time
+
+    try:
+        from vllm import LLM  # type: ignore
+    except ImportError:
+        console.print("[red]This command requires vLLM.[/red]")
+        console.print("Install with: pip install kvviz[vllm]")
+        raise typer.Exit(1)
+
+    from kvviz.fragmentation.collector import VLLMBlockCollector
+    from kvviz.fragmentation.schema import FragSimConfig, FragTrace, FragEvent, FragEventType
+
+    console.print("[yellow]frag-live expects a vLLM engine in the same process.[/yellow]")
+    console.print("For headless collection, use the Python API:")
+    console.print("  from kvviz.fragmentation.collector import VLLMBlockCollector")
+    console.print("  collector = VLLMBlockCollector(engine, on_snapshot=...)")
+    console.print("  collector.start()")
+
+    # Collect CUDA stats only (no engine) as a demo / baseline
+    from kvviz.fragmentation.cuda_stats import capture_cuda_stats
+
+    snapshots = []
+    console.print(f"Collecting CUDA memory stats for {duration}s at {poll_hz} Hz...")
+    interval = 1.0 / poll_hz
+    end_time = _time.time() + duration
+    step = 0
+    while _time.time() < end_time:
+        cuda = capture_cuda_stats(cuda_device)
+        from kvviz.fragmentation.schema import FragSnapshot
+        snap = FragSnapshot(
+            timestamp_ms=_time.time() * 1000,
+            cuda_stats=cuda,
+            step=step,
+        )
+        snapshots.append(snap)
+        step += 1
+        _time.sleep(interval)
+
+    # Save as a lightweight JSON array
+    out.parent.mkdir(parents=True, exist_ok=True)
+    data = [s.model_dump() for s in snapshots]
+    out.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    console.print(f"Collected {len(snapshots)} snapshots → [green]{out}[/green]")
+
+
 if __name__ == "__main__":
     app()
